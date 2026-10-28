@@ -187,6 +187,25 @@ src/test/java/org/openphc/cce/emitter/
 
 > **Note:** OpenMRS Visits are returned as FHIR `Encounter` resources with `meta.tag.code = "visit"` — they are automatically included in the Encounter poll. TestOrders map to `ServiceRequest` and DrugOrders map to `MedicationRequest`.
 
+### 6.1 FHIR R4 Field Corrections
+
+fhir2's output is corrected before forwarding so that every field holds what its
+[FHIR R4](https://hl7.org/fhir/R4/resourcelist.html) definition says it holds.
+
+| Resource.element | R4 definition | fhir2 sends | Forwarded | Set by |
+|---|---|---|---|---|
+| `ServiceRequest.locationReference` | "the preferred location(s) where the procedure should actually happen" | the ordering encounter's location | the **destination** Location of a referral out; otherwise empty | `OrderIdentifierEnricher` |
+| `ServiceRequest.performer` | "the desired performer for doing the requested service" | the orderer, copied by `PractitionerReferenceEnricher` | the destination **Organization** of a referral out (facility code as identifier) | `OrderIdentifierEnricher` |
+| `ServiceRequest` ordering facility | *no R4 element* | — | `source-facility` extension = the ordering encounter's location uuid; CCE's OpenHIM adaptor reads the ServiceRequest facility ID from it first | `FacilityReferenceEnricher` |
+| `ServiceRequest.authoredOn` | "when the request transitioned to being actionable" | absent | order `dateActivated` | `OrderIdentifierEnricher` |
+| `ServiceRequest.priority` | routine \| urgent \| asap \| stat | absent | order `urgency` (ROUTINE → routine, STAT → stat) | `OrderIdentifierEnricher` |
+| `ServiceRequest.note` | "notes and comments made about the service request" | absent | order `instructions` | `OrderIdentifierEnricher` |
+| `Condition.clinicalStatus` | required binding: active, recurrence, relapse, inactive, remission, resolved | `unknown` (not an R4 code) | removed when not an R4 code (allowed for an encounter diagnosis, con-3) | `ConditionClinicalStatusNormalizer` |
+| `Encounter.status` | planned … finished, cancelled, entered-in-error, unknown | always `unknown` | `finished` once the visit has a stop time, else `in-progress` | `EncounterStatusEnricher` |
+| `MedicationDispense.context` | "the encounter or episode of care that establishes the context for this event" | absent | the visit of the authorizing prescription (`Encounter/<visit uuid>`) | `MedicationDispenseContextEnricher` |
+| `Coding.system`, `Quantity.system` | the system that defines the code (Quantity: mandatory with a code, qty-3) | absent on OpenMRS concept-uuid codings | `urn:openmrs:concept`; identifier-type codings `urn:openmrs:patient-identifier-type` | `CodingSystemNormalizer` |
+| Observation of concept *Referral destination facility* | an Observation is a measurement or assertion about the patient | the obs recording a referral out's destination | **not forwarded** (sent as `ServiceRequest.performer` / `locationReference`) | `FhirPollerService` |
+
 ---
 
 ## 7. Architecture Principles

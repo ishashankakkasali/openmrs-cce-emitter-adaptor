@@ -34,6 +34,12 @@ public class EmitterProperties {
     @Valid
     private ReferralConfig referral = new ReferralConfig();
 
+    @Valid
+    private CareSettingConfig careSetting = new CareSettingConfig();
+
+    @Valid
+    private TestOrderCategoryConfig testOrderCategory = new TestOrderCategoryConfig();
+
     @Data
     public static class OpenmrsConfig {
         @NotBlank
@@ -150,6 +156,66 @@ public class EmitterProperties {
     public static class ReferralConfig {
         @Valid
         private ReferralResponseConfig response = new ReferralResponseConfig();
+        @Valid
+        private ReferralDirectionConfig direction = new ReferralDirectionConfig();
+    }
+
+    @Data
+    public static class ReferralDirectionConfig {
+        /**
+         * When enabled, every ServiceRequest whose OpenMRS order type is the referral order type
+         * ({@code referral.response.order-type-name}) gets a category coding saying whether it is
+         * an inbound referral (created by the receiver adaptor inside a "Referral In" encounter)
+         * or an outbound referral placed by a clinician in this EMR — so a PlanDefinition can
+         * trigger on outbound referrals without matching the echo of inbound ones.
+         */
+        private boolean enabled = true;
+        private String categorySystem = "http://cce.openphc.org/CodeSystem/referral-direction";
+        private String inboundCode = "inbound";
+        private String outboundCode = "outbound";
+        /** Encounter type the receiver adaptor creates inbound referral orders in ("Referral In"). */
+        private String inboundEncounterTypeUuid = "de0f5558-9813-4fa3-8613-467015f9fabd";
+        /**
+         * Text concept on an outbound referral's encounter holding the destination location uuid
+         * (recorded by the referral-fulfillment ESM's "New referral out"). The destination is sent
+         * as {@code ServiceRequest.performer}; when the obs is absent, performer is left as is.
+         */
+        private String destinationConceptUuid = "5f8a2c6e-3b9d-4e1f-a7c4-0d6e9b2a8f15";
+        /** Location attribute type holding the destination's facility code, sent as the performer identifier. */
+        private String facilityCodeAttributeTypeUuid = "9e2b7c40-5d1a-4f8e-b3c6-1a7d0e4f9c52";
+        /** Identifier system of the destination facility code on {@code ServiceRequest.performer}. */
+        private String destinationIdentifierSystem = "http://cce.openphc.org/fhir/NamingSystem/facility-code";
+    }
+
+    @Data
+    public static class TestOrderCategoryConfig {
+        /**
+         * When enabled, every ServiceRequest whose OpenMRS order type is the test order type gets a
+         * category coding (by default SNOMED 108252007 "Laboratory procedure", the R4 example), so a
+         * PlanDefinition can trigger on lab orders with a codeFilter. fhir2 sends test orders with no
+         * category, and the only other way to tell them from referral orders is a condition on the
+         * category being absent.
+         */
+        private boolean enabled = true;
+        /** OpenMRS core "Test Order" order type. */
+        private String orderTypeUuid = "52a447d3-a64a-11e3-9aeb-50e549534c5e";
+        private String system = "http://snomed.info/sct";
+        private String code = "108252007";
+        private String display = "Laboratory procedure";
+    }
+
+    @Data
+    public static class CareSettingConfig {
+        /**
+         * When enabled, every forwarded resource carries a {@code meta.tag} naming the care setting
+         * this EMR serves (e.g. the cluster hospital), so PlanDefinition conditions can tell its
+         * events from other systems' events carrying the same codes (CloudEvent source is not
+         * visible to trigger conditions).
+         */
+        private boolean enabled = false;
+        private String system = "http://cce.openphc.org/CodeSystem/care-setting";
+        private String code;
+        private String display;
     }
 
     @Data

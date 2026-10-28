@@ -12,6 +12,7 @@ import org.hl7.fhir.r4.model.Encounter;
 import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Reference;
+import org.hl7.fhir.r4.model.ServiceRequest;
 import org.openphc.cce.emitter.config.EmitterProperties;
 import org.openphc.cce.emitter.config.EmitterProperties.OpenmrsConfig;
 import org.slf4j.Logger;
@@ -53,6 +54,8 @@ public class FacilityReferenceEnricher {
     private static final Logger log = LoggerFactory.getLogger(FacilityReferenceEnricher.class);
     private static final long CACHE_TTL_SECONDS = 3600L;
     private static final int CACHE_MAX_SIZE = 10_000;
+    /** CCE's OpenHIM adaptor matches this extension by its "source-facility" suffix. */
+    static final String SOURCE_FACILITY_EXTENSION_URL = "http://cce.openphc.org/fhir/StructureDefinition/source-facility";
 
     private static final Set<Class<? extends IBaseResource>> LOCATION_TYPES = Set.of(
             Location.class
@@ -85,7 +88,28 @@ public class FacilityReferenceEnricher {
         Reference locRef = resolveLocationFromEncounter(encounterId);
         if (locRef == null) return;
 
+        if (resource instanceof ServiceRequest serviceRequest) {
+            // R4 ServiceRequest.locationReference is where the service should be performed, not where it
+            // was ordered: the ordering location goes into the source-facility extension instead.
+            addSourceFacilityExtension(serviceRequest, locRef);
+            return;
+        }
         populateEmptyLocationFields(resource, locRef);
+    }
+
+    /**
+     * Records the facility a ServiceRequest was ordered at — the location of its encounter — as the
+     * {@code source-facility} extension, which CCE's OpenHIM adaptor reads as the event's facility ID.
+     * R4 ServiceRequest has no element for the ordering location.
+     *
+     * <p>Example: ordered in an encounter at Location/44c3efb0-… → {@code extension = [{url:
+     * "http://cce.openphc.org/fhir/StructureDefinition/source-facility", valueString: "44c3efb0-…"}]}.
+     */
+    private void addSourceFacilityExtension(ServiceRequest serviceRequest, Reference locRef) {
+        String locationId = locRef.getReferenceElement().getIdPart();
+        if (locationId == null || serviceRequest.hasExtension(SOURCE_FACILITY_EXTENSION_URL)) return;
+        serviceRequest.addExtension(new org.hl7.fhir.r4.model.Extension(SOURCE_FACILITY_EXTENSION_URL,
+                new org.hl7.fhir.r4.model.StringType(locationId)));
     }
 
     /**

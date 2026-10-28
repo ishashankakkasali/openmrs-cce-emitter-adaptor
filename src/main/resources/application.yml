@@ -47,7 +47,7 @@ emitter:
       page-size: ${POLLING_FHIR_PAGE_SIZE:50}
       overlap-seconds: ${POLLING_FHIR_OVERLAP_SECONDS:5}
       follow-prior-order: ${POLLING_FHIR_FOLLOW_PRIOR_ORDER:true}
-      resource-types: ${POLLING_FHIR_RESOURCE_TYPES:Patient,RelatedPerson,Encounter,Observation,Condition,ServiceRequest}
+      resource-types: ${POLLING_FHIR_RESOURCE_TYPES:Patient,RelatedPerson,Encounter,Observation,Condition,ServiceRequest,MedicationRequest,MedicationDispense}
 
   checkpoint:
     store-type: "${CHECKPOINT_STORE_TYPE:file}"
@@ -76,6 +76,28 @@ emitter:
       instructions-code: "${REFERRAL_RESPONSE_INSTRUCTIONS_CODE:referral-instructions}"
       instructions-display: "${REFERRAL_RESPONSE_INSTRUCTIONS_DISPLAY:Referral Instructions}"
       response-encounter-type-uuid: "${REFERRAL_RESPONSE_ENCOUNTER_TYPE_UUID:479e4805-90d9-44f5-b252-333d8a687e52}"
+    direction:
+      enabled: ${REFERRAL_DIRECTION_ENABLED:true}
+      category-system: "${REFERRAL_DIRECTION_CATEGORY_SYSTEM:http://cce.openphc.org/CodeSystem/referral-direction}"
+      inbound-code: "${REFERRAL_DIRECTION_INBOUND_CODE:inbound}"
+      outbound-code: "${REFERRAL_DIRECTION_OUTBOUND_CODE:outbound}"
+      inbound-encounter-type-uuid: "${REFERRAL_DIRECTION_INBOUND_ENCOUNTER_TYPE_UUID:de0f5558-9813-4fa3-8613-467015f9fabd}"
+      destination-concept-uuid: "${REFERRAL_DIRECTION_DESTINATION_CONCEPT_UUID:5f8a2c6e-3b9d-4e1f-a7c4-0d6e9b2a8f15}"
+      facility-code-attribute-type-uuid: "${REFERRAL_DIRECTION_FACILITY_CODE_ATTRIBUTE_TYPE_UUID:9e2b7c40-5d1a-4f8e-b3c6-1a7d0e4f9c52}"
+      destination-identifier-system: "${REFERRAL_DIRECTION_DESTINATION_IDENTIFIER_SYSTEM:http://cce.openphc.org/fhir/NamingSystem/facility-code}"
+
+  test-order-category:
+    enabled: ${TEST_ORDER_CATEGORY_ENABLED:true}
+    order-type-uuid: "${TEST_ORDER_CATEGORY_ORDER_TYPE_UUID:52a447d3-a64a-11e3-9aeb-50e549534c5e}"
+    system: "${TEST_ORDER_CATEGORY_SYSTEM:http://snomed.info/sct}"
+    code: "${TEST_ORDER_CATEGORY_CODE:108252007}"
+    display: "${TEST_ORDER_CATEGORY_DISPLAY:Laboratory procedure}"
+
+  care-setting:
+    enabled: ${CARE_SETTING_TAG_ENABLED:true}
+    system: "${CARE_SETTING_TAG_SYSTEM:http://cce.openphc.org/CodeSystem/care-setting}"
+    code: "${CARE_SETTING_TAG_CODE:}"
+    display: "${CARE_SETTING_TAG_DISPLAY:}"
 
 logging:
   level:

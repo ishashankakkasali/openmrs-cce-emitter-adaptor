@@ -5,6 +5,8 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeChildResourceDefinition;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.util.FhirTerser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -64,6 +66,7 @@ public class PractitionerReferenceEnricher {
     private final RestTemplate restTemplate;
     private final AuthService authService;
     private final FhirContext fhirContext;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** Cache: Encounter UUID → lookup result (practitioner + visit UUID) */
     private final ConcurrentHashMap<String, CacheEntry> encounterPractitionerCache = new ConcurrentHashMap<>();
@@ -119,8 +122,8 @@ public class PractitionerReferenceEnricher {
      * The OpenMRS practitioner who performed the service goes into performer,
      * resolved from the linked encounter's participant. If the linked encounter
      * has no participant (e.g. "Referral In" auto-created by SPICE), falls back
-     * to searching for a sibling "Referral Response" encounter under the same
-     * visit to find the fulfilling practitioner.
+     * to a sibling "Referral Response" encounter under the same visit, and then —
+     * for a closed order — to the encounter of the DISCONTINUE order that closed it.
      */
     private void enrichServiceRequestPerformer(ServiceRequest sr) {
         // Skip if performer is already populated
@@ -145,11 +148,67 @@ public class PractitionerReferenceEnricher {
             practRef = resolvePractitionerFromSiblingReferralResponse(lookup.visitUuid());
         }
 
+        // Fallback: the referral is filed apart from the visit it is answered in (e.g. a
+        // closed "Referral Intake" visit vs the patient's OPD visit), so take the
+        // practitioner of the encounter holding the DISCONTINUE order that closed it.
+        if (practRef == null && (sr.getStatus() == ServiceRequest.ServiceRequestStatus.COMPLETED
+                || sr.getStatus() == ServiceRequest.ServiceRequestStatus.REVOKED)) {
+            practRef = resolvePractitionerFromClosingOrder(sr.getIdElement().getIdPart());
+        }
+
         if (practRef == null) return;
 
         sr.addPerformer(practRef.copy());
-        log.info("Enriched ServiceRequest/{}.performer from sibling Referral Response: {}",
+        log.info("Enriched ServiceRequest/{}.performer from the Referral Response: {}",
                 sr.getIdElement().getIdPart(), practRef.getReference());
+    }
+
+    /**
+     * Finds the DISCONTINUE order whose {@code previousOrder} is the given order (written by the
+     * referral-fulfillment ESM into the Referral Response encounter when the referral is closed)
+     * and resolves the practitioner from that order's encounter.
+     */
+    private Reference resolvePractitionerFromClosingOrder(String orderUuid) {
+        if (orderUuid == null || orderUuid.isBlank()) return null;
+        String base = stripTrailingSlash(properties.getOpenmrs().getBaseUrl()) + "/ws/rest/v1/order";
+        try {
+            JsonNode order = getRestJson(base + "/" + orderUuid + "?v=custom:(patient:(uuid))");
+            String patientUuid = order == null ? null : order.path("patient").path("uuid").asText(null);
+            if (patientUuid == null) return null;
+
+            JsonNode orders = getRestJson(base + "?patient=" + patientUuid
+                    + "&v=custom:(action,previousOrder:(uuid),encounter:(uuid))");
+            if (orders == null) return null;
+            for (JsonNode o : orders.path("results")) {
+                if ("DISCONTINUE".equals(o.path("action").asText())
+                        && orderUuid.equals(o.path("previousOrder").path("uuid").asText(null))) {
+                    String encounterUuid = o.path("encounter").path("uuid").asText(null);
+                    return encounterUuid == null ? null : resolvePractitionerFromEncounter(encounterUuid);
+                }
+            }
+            log.debug("No DISCONTINUE order found closing order {}", orderUuid);
+            return null;
+        } catch (HttpClientErrorException.NotFound e) {
+            log.debug("Order {} not found while resolving the closing practitioner", orderUuid);
+            return null;
+        } catch (ResourceAccessException | HttpClientErrorException e) {
+            log.warn("Failed to resolve the closing practitioner of order {}: {}", orderUuid, e.getMessage());
+            return null;
+        } catch (Exception e) {
+            log.warn("Unexpected error resolving the closing practitioner of order {}: {}", orderUuid, e.getMessage());
+            return null;
+        }
+    }
+
+    private JsonNode getRestJson(String url) throws Exception {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        String auth = authService.resolveOpenmrsAuthHeader(properties.getOpenmrs().getAuth());
+        if (auth != null) {
+            headers.set(HttpHeaders.AUTHORIZATION, auth);
+        }
+        String body = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class).getBody();
+        return body == null || body.isBlank() ? null : objectMapper.readTree(body);
     }
 
     /**

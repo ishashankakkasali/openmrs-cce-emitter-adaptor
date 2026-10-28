@@ -48,6 +48,11 @@ public class FhirPollerService {
     private final ReferralResponseOrderEnricher referralResponseOrderEnricher;
     private final PractitionerReferenceEnricher practitionerReferenceEnricher;
     private final FacilityReferenceEnricher facilityReferenceEnricher;
+    private final CareSettingTagEnricher careSettingTagEnricher;
+    private final ConditionClinicalStatusNormalizer conditionClinicalStatusNormalizer;
+    private final EncounterStatusEnricher encounterStatusEnricher;
+    private final MedicationDispenseContextEnricher medicationDispenseContextEnricher;
+    private final CodingSystemNormalizer codingSystemNormalizer;
     private final MeterRegistry meterRegistry;
 
     public FhirPollerService(EmitterProperties properties,
@@ -62,6 +67,11 @@ public class FhirPollerService {
                              ReferralResponseOrderEnricher referralResponseOrderEnricher,
                              PractitionerReferenceEnricher practitionerReferenceEnricher,
                              FacilityReferenceEnricher facilityReferenceEnricher,
+                             CareSettingTagEnricher careSettingTagEnricher,
+                             ConditionClinicalStatusNormalizer conditionClinicalStatusNormalizer,
+                             EncounterStatusEnricher encounterStatusEnricher,
+                             MedicationDispenseContextEnricher medicationDispenseContextEnricher,
+                             CodingSystemNormalizer codingSystemNormalizer,
                              MeterRegistry meterRegistry) {
         this.properties = properties;
         this.fhirContext = fhirContext;
@@ -75,6 +85,11 @@ public class FhirPollerService {
         this.referralResponseOrderEnricher = referralResponseOrderEnricher;
         this.practitionerReferenceEnricher = practitionerReferenceEnricher;
         this.facilityReferenceEnricher = facilityReferenceEnricher;
+        this.careSettingTagEnricher = careSettingTagEnricher;
+        this.conditionClinicalStatusNormalizer = conditionClinicalStatusNormalizer;
+        this.encounterStatusEnricher = encounterStatusEnricher;
+        this.medicationDispenseContextEnricher = medicationDispenseContextEnricher;
+        this.codingSystemNormalizer = codingSystemNormalizer;
         this.meterRegistry = meterRegistry;
     }
 
@@ -181,6 +196,12 @@ public class FhirPollerService {
     private boolean forwardOne(IParser parser, IBaseResource resource, String resourceType, String resourceId) {
         MDC.put("resourceId", resourceId);
         try {
+            if (isReferralDestinationObservation(resource)) {
+                // referral metadata, not an observation about the patient — sent as ServiceRequest.performer instead
+                forwardingEngine.recordSkipped(resourceType, "referral-destination-obs");
+                log.debug("Skipping {}/{} — referral destination obs", resourceType, resourceId);
+                return false;
+            }
             PatientReferenceRewriter.Result rr = patientReferenceRewriter.rewrite(resource);
             switch (rr.outcome()) {
                 case SKIP_MISSING_NATIONAL_ID -> {
@@ -200,12 +221,32 @@ public class FhirPollerService {
             referralResponseOrderEnricher.enrich(enriched);
             practitionerReferenceEnricher.enrich(enriched);
             facilityReferenceEnricher.enrich(enriched);
+            careSettingTagEnricher.enrich(enriched);
+            conditionClinicalStatusNormalizer.normalize(enriched);
+            encounterStatusEnricher.enrich(enriched);
+            medicationDispenseContextEnricher.enrich(enriched);
+            // last: also covers codings added by the enrichers above
+            codingSystemNormalizer.normalize(enriched);
             String json = parser.encodeResourceToString(enriched);
             ForwardResult result = forwardingEngine.forward(json, resourceType, resourceId);
             return result.isSuccess();
         } finally {
             MDC.remove("resourceId");
         }
+    }
+
+    /**
+     * The obs that records where a referral out is sent (concept {@code
+     * referral.direction.destination-concept-uuid}) is stored as an Observation in OpenMRS, but in
+     * FHIR R4 an Observation is a measurement or assertion about the patient; the destination is
+     * sent as the referral's {@code ServiceRequest.performer} instead.
+     */
+    private boolean isReferralDestinationObservation(IBaseResource resource) {
+        if (!(resource instanceof org.hl7.fhir.r4.model.Observation observation)) return false;
+        String destinationConceptUuid = properties.getReferral().getDirection().getDestinationConceptUuid();
+        if (destinationConceptUuid == null || destinationConceptUuid.isBlank()) return false;
+        return observation.getCode().getCoding().stream()
+                .anyMatch(coding -> destinationConceptUuid.equals(coding.getCode()));
     }
 
     private String buildFhirUrl(OpenmrsConfig openmrs, String resourceType, String queryTime, int pageSize) {
